@@ -9,6 +9,8 @@ Alles bleibt bei dir: Die Karten liegen im Browser (IndexedDB), und die Dokument
 - **Stapel und Karten:** anlegen, bearbeiten, löschen. Jede Seite einer Karte kann ein Bild haben, ein Foto oder einen Ausschnitt aus einem Dokument.
 - **Lernen:** Karte antippen zum Umdrehen, dann mit „Nochmal“, „Schwer“, „Gut“ oder „Leicht“ bewerten. Die Karten wandern durch 6 Fächer und kommen nach 0, 1, 3, 7, 16 oder 35 Tagen wieder. Auf dem iPad geht das auch per Wischen (rechts = Gut, links = Nochmal), am Rechner mit Leertaste und den Tasten 1 bis 4.
 - **Karten mit KI erstellen:** aus einem Thema, eingefügtem Text oder importierten Dokumenten (PDF, .docx, Bilder, .txt/.md/.csv).
+  - **Anzahl frei wählbar** (1–200). Größere Mengen erstellt das Modell in Durchgängen zu je 20 Karten (im Browser: 10), ohne Karten zu wiederholen.
+  - **Modell frei wählbar:** Im Erstellen-Fenster stehen alle auf dem Server installierten Modelle zur Auswahl. Im Browser-Modus kannst du in den Einstellungen jedes WebLLM-Modell über seine ID eintragen.
   - **Vision-Modelle** (z. B. `gemma3`, `qwen2.5vl`, `llava`) sehen die Seiten mit Abbildungen und schneiden passende Abbildungen für die Karten aus.
   - **Andere Modelle** ordnen Abbildungen anhand des Textes zu.
   - In der Vorschau kannst du jeden Ausschnitt ändern, ein Bild auf die andere Seite legen, entfernen oder eines hinzufügen.

@@ -478,6 +478,7 @@ async function cropView(src, initialBox, onPick, onBack) {
 /* ---------- KI-Einstellungen ---------- */
 function settingsSheet(then) {
   const s = ai.settings;
+  const customBrowserModel = !ai.BROWSER_MODELS.some(m => m.id === s.browserModel);
   openSheet(`
     <div class="sheet-head"><h2>KI-Modell</h2><button class="icon" data-act="close" aria-label="Schließen">✕</button></div>
     <p class="small muted">Karten werden ausschließlich mit einem lokalen Modell erstellt. Deine Dokumente verlassen dein Gerät bzw. dein Heimnetz nicht.</p>
@@ -519,7 +520,11 @@ function settingsSheet(then) {
     <div id="pbrowser" ${s.provider === "browser" ? "" : "hidden"} style="display:grid;gap:14px">
       ${ai.browserSupported() ? "" : `<div class="note warn">Dieser Browser unterstützt kein WebGPU. Auf dem iPad geht das ab iPadOS 26 in Safari, am Rechner in aktuellem Chrome oder Edge.</div>`}
       <div class="field"><label class="label" for="sbmodel">Modell</label>
-        <select id="sbmodel">${ai.BROWSER_MODELS.map(m => `<option value="${m.id}" ${m.id === s.browserModel ? "selected" : ""}>${esc(m.label)} · Download ${esc(m.size)}</option>`).join("")}</select>
+        <select id="sbmodel">${ai.BROWSER_MODELS.map(m => `<option value="${m.id}" ${m.id === s.browserModel ? "selected" : ""}>${esc(m.label)} · Download ${esc(m.size)}</option>`).join("")}<option value="__custom" ${customBrowserModel ? "selected" : ""}>Anderes Modell (ID eingeben)…</option></select>
+      </div>
+      <div class="field" id="sbcustomwrap" ${customBrowserModel ? "" : "hidden"}><label class="label" for="sbcustom">Modell-ID aus WebLLM</label>
+        <input id="sbcustom" value="${customBrowserModel ? esc(s.browserModel) : ""}" placeholder="z. B. Qwen2.5-7B-Instruct-q4f16_1-MLC" autocapitalize="off" autocorrect="off" spellcheck="false">
+        <span class="small muted">Alle Modelle mit „-MLC“ am Ende aus der WebLLM-Modellliste (github.com/mlc-ai/web-llm). Größere Modelle brauchen mehr Speicher, als viele iPads haben.</span>
       </div>
       <p class="small muted">Das Modell wird beim ersten Mal aus dem Internet geladen und danach im Browser gespeichert. Es läuft dann offline auf deinem Gerät. Kleine Modelle sind langsamer und ungenauer als Modelle auf einem Rechner, sehen keine Bilder und können nur kürzere Dokumente verarbeiten (etwa 5 Seiten Text).</p>
       <div class="row"><button id="sbload">Modell jetzt laden</button><span class="small muted" id="sbmsg">${ai.browserModelLoaded() ? "Geladen." : ""}</span></div>
@@ -532,7 +537,7 @@ function settingsSheet(then) {
     const q = id => sh.querySelector(id);
     const read = () => ({
       provider, api: q("#sapi").value, baseUrl: q("#surl").value.trim(), model: q("#smodel").value.trim(),
-      vision: q("#svision").checked, numCtx: +q("#sctx").value, browserModel: q("#sbmodel").value,
+      vision: q("#svision").checked, numCtx: +q("#sctx").value, browserModel: q("#sbmodel").value === "__custom" ? (q("#sbcustom").value.trim() || ai.BROWSER_MODELS[0].id) : q("#sbmodel").value,
     });
     const apply = () => { Object.assign(ai.settings, read()); q("#smixed").hidden = !ai.mixedContentProblem(); };
     apply();
@@ -549,6 +554,9 @@ function settingsSheet(then) {
       apply();
     };
     q("#surl").oninput = apply;
+    if (provider === "server") ai.listModels().then(models => { q("#smodels").innerHTML = models.map(m => `<option value="${esc(m)}">`).join(""); }).catch(() => {});
+    q("#sbmodel").onchange = () => { q("#sbcustomwrap").hidden = q("#sbmodel").value !== "__custom"; apply(); };
+    q("#sbcustom").oninput = apply;
     q("#stest").onclick = async () => {
       apply();
       const msg = q("#stestmsg");
@@ -666,15 +674,25 @@ function cardSchema(withImages) {
   return { type: "object", properties: { deckName: { type: "string" }, cards: { type: "array", items: card } }, required: ["deckName", "cards"] };
 }
 
+const MAX_CARDS = 200;
+
 function genSheet(targetId) {
   if (!ai.isConfigured()) { settingsSheet(() => genSheet(targetId)); return; }
   const browser = ai.settings.provider === "browser";
-  let count = browser ? 5 : 10, kind = "qa", results = null, useImages = true;
-  const counts = browser ? [3, 5, 10, 15] : [5, 10, 20, 30];
+  let kind = "qa", results = null, useImages = true;
   const deckOptions = decks.map(d => `<option value="${d.id}" ${d.id === targetId ? "selected" : ""}>${esc(d.name)}</option>`).join("");
+  const browserOptions = () => {
+    const list = ai.BROWSER_MODELS.some(m => m.id === ai.settings.browserModel) ? ai.BROWSER_MODELS : [...ai.BROWSER_MODELS, { id: ai.settings.browserModel, label: ai.settings.browserModel, size: "eigenes Modell" }];
+    return list.map(m => `<option value="${esc(m.id)}" ${m.id === ai.settings.browserModel ? "selected" : ""}>${esc(m.label)} · ${esc(m.size)}</option>`).join("");
+  };
   openSheet(`
     <div class="sheet-head"><h2>✦ Karten mit KI erstellen</h2><button class="icon" data-act="close" aria-label="Schließen">✕</button></div>
-    <p class="row small muted" style="gap:4px">Modell: ${aiStatus()}</p>
+    <div class="row" style="align-items:flex-end">
+      <div class="field" style="flex:1 1 240px"><label class="label" for="gmodel">Modell${browser ? " (im Browser)" : ""}</label>
+        <select id="gmodel">${browser ? browserOptions() : `<option value="${esc(ai.settings.model)}">${esc(ai.settings.model)}</option>`}</select>
+      </div>
+      <button class="ghost" data-act="settings">Einstellungen</button>
+    </div>
     <div class="field">
       <span class="label">Dokumente</span>
       <div class="drop" id="gdrop">
@@ -686,12 +704,15 @@ function genSheet(targetId) {
       <label class="label" for="gsrc">Thema, Hinweise oder Lernstoff</label>
       <textarea id="gsrc" rows="4" placeholder="Ein Thema („Französische Revolution, Ursachen und Verlauf“), Hinweise zum Dokument („nur Kapitel 3, Fokus auf Definitionen“) oder direkt eingefügter Text."></textarea>
     </div>
-    <div class="row">
-      <div class="field"><span class="label">Anzahl</span><div class="seg" id="gcount">${counts.map(n => `<button data-n="${n}" class="${n === count ? "on" : ""}">${n}</button>`).join("")}</div></div>
+    <div class="row" style="align-items:flex-start">
+      <div class="field"><label class="label" for="gcount">Anzahl Karten</label>
+        <input id="gcount" type="number" inputmode="numeric" min="1" max="${MAX_CARDS}" step="1" value="${browser ? 5 : 10}" style="width:130px">
+      </div>
       <div class="field"><span class="label">Art</span><div class="seg" id="gkind">
         <button data-k="qa" class="on">Frage – Antwort</button><button data-k="vocab">Vokabeln</button><button data-k="def">Begriffe</button>
       </div></div>
     </div>
+    <p class="small muted" id="gcountnote" hidden></p>
     <label class="check small" id="gimgrow" hidden><input type="checkbox" id="gimg" checked> Abbildungen aus den Dokumenten auf Karten verwenden, wo sie helfen</label>
     <p class="small muted" id="gimgnote" hidden></p>
     <div class="field"><label class="label" for="gdeck">In Stapel</label>
@@ -711,6 +732,37 @@ function genSheet(targetId) {
       note.textContent = "Dein Modell sieht keine Bilder. Es kann Abbildungen anhand des Textes zuordnen; den Ausschnitt kannst du in der Vorschau anpassen.";
     };
     drawDocs();
+
+    // Modell wählen: auf dem Server alle installierten Modelle, im Browser die WebLLM-Modelle
+    const $model = sh.querySelector("#gmodel");
+    if (!browser) {
+      ai.listModels().then(models => {
+        if (!models.length) return;
+        const cur = ai.settings.model;
+        $model.innerHTML = [...new Set([cur, ...models])].filter(Boolean).map(m => `<option value="${esc(m)}" ${m === cur ? "selected" : ""}>${esc(m)}</option>`).join("");
+      }).catch(() => { /* Server gerade nicht erreichbar: aktuelles Modell bleibt */ });
+    }
+    $model.onchange = async () => {
+      if (browser) ai.settings.browserModel = $model.value;
+      else {
+        ai.settings.model = $model.value;
+        const v = await ai.detectVision($model.value);
+        if (v != null) ai.settings.vision = v;
+      }
+      await ai.saveSettings();
+      drawDocs();
+    };
+
+    const $count = sh.querySelector("#gcount");
+    const batchSize = browser ? 10 : 20;
+    const countNote = () => {
+      const n = parseInt($count.value, 10);
+      const el = sh.querySelector("#gcountnote");
+      el.hidden = !(n > batchSize);
+      el.textContent = `Bei mehr als ${batchSize} Karten erstellt das Modell sie in ${Math.ceil(n / batchSize)} Durchgängen. Das dauert entsprechend länger.`;
+    };
+    $count.oninput = countNote;
+
     $docs.onclick = e => { const b = e.target.closest("[data-rmdoc]"); if (b) { removeDoc(b.dataset.rmdoc); drawDocs(); } };
     const addFiles = async files => {
       if (!files.length) return;
@@ -724,13 +776,14 @@ function genSheet(targetId) {
     $drop.ondragleave = () => $drop.classList.remove("over");
     $drop.ondrop = e => { e.preventDefault(); $drop.classList.remove("over"); addFiles([...e.dataTransfer.files]); };
     sh.querySelector("#gimg").onchange = e => { useImages = e.target.checked; };
-    sh.querySelectorAll("#gcount button").forEach(b => b.onclick = () => { count = +b.dataset.n; sh.querySelectorAll("#gcount button").forEach(x => x.classList.toggle("on", x === b)); });
     sh.querySelectorAll("#gkind button").forEach(b => b.onclick = () => { kind = b.dataset.k; sh.querySelectorAll("#gkind button").forEach(x => x.classList.toggle("on", x === b)); });
 
     const $go = sh.querySelector("#gogen");
     $go.onclick = async () => {
       const hint = sh.querySelector("#gsrc").value.trim();
       if (!hint && !docs.length) { sh.querySelector("#gsrc").focus(); return; }
+      const count = parseInt($count.value, 10);
+      if (!(count >= 1 && count <= MAX_CARDS)) { toast(`Bitte eine Anzahl zwischen 1 und ${MAX_CARDS} eingeben.`); $count.focus(); return; }
       $go.disabled = true;
       genCtl = new AbortController();
       const signal = genCtl.signal;
@@ -739,6 +792,8 @@ function genSheet(targetId) {
         $out.querySelector("#gstop").onclick = () => genCtl.abort();
       };
       const busy = msg => { const el = $out.querySelector("#gbusy"); if (el) el.textContent = msg; };
+      const cards = [];
+      let deckName = "", cut = false;
       try {
         // Bildquellen: Abbildungen zuerst. Vision-Modelle bekommen die Bilder, andere nur die Liste.
         const vision = ai.canSeeImages();
@@ -758,8 +813,7 @@ function genSheet(targetId) {
         }
 
         let material = docs.map(d => `=== Dokument: ${d.name} ===\n${d.text || "(kein Text, nur Bild)"}`).join("\n\n");
-        const limit = ai.maxInputChars(vision ? sources.length : 0, count);
-        let cut = false;
+        const limit = ai.maxInputChars(vision ? sources.length : 0, Math.min(count, batchSize) + 15);
         if (material.length > limit) { material = material.slice(0, limit) + "\n[… gekürzt]"; cut = true; }
 
         const list = sources.map((x, k) => `Bild ${k + 1}: ${x.d.name}, ${x.s.label}${x.s.figure ? " (enthält Abbildungen)" : ""}`).join("\n");
@@ -777,7 +831,7 @@ ${list}
 - Wenn eine Karte von einer Abbildung profitiert, deren Inhalt aus dem umgebenden Text klar hervorgeht, hänge sie an: "image": {"ref": <Bildnummer>, "side": "back"}.
 - Nur selten und nur, wenn du sicher bist, dass die Abbildung zum Inhalt der Karte passt.`;
 
-        const prompt = `Erstelle genau ${count} Lern-Karteikarten.
+        const makePrompt = (n, existing) => `Erstelle genau ${n} Lern-Karteikarten.
 
 Regeln:
 - ${STYLES[kind]}
@@ -786,41 +840,65 @@ Regeln:
 - Schreibe in der Sprache des Stoffs (bei einem Thema ohne Text: Deutsch).
 - Wenn Dokumente oder ein Text gegeben sind, nur Inhalte daraus verwenden und die wichtigsten Inhalte abdecken.
 - Schlage außerdem einen kurzen Stapelnamen vor (höchstens 5 Wörter).${imgRules}
-
+${existing.length ? `
+Diese Karten gibt es schon. Wiederhole sie nicht, sondern decke andere Inhalte ab:
+${existing.slice(-80).map(f => "- " + f.slice(0, 120)).join("\n")}
+` : ""}
 Antworte ausschließlich mit JSON in genau dieser Form:
 {"deckName": "…", "cards": [{"front": "…", "back": "…"${sources.length ? `, "image": {"ref": 1, ${vision ? `"box": [0.1, 0.2, 0.9, 0.6], ` : ""}"side": "back"}` : ""}}]}
 ${sources.length ? `"image" nur bei Karten, die ein Bild bekommen; sonst weglassen.\n` : ""}
 ${hint ? `Thema / Hinweise der lernenden Person:\n"""\n${hint}\n"""\n` : ""}${material ? `\nDokumente:\n"""\n${material}\n"""` : ""}`;
 
+        // Große Mengen in Durchgängen erstellen; lokale Modelle liefern sonst oft zu wenige Karten
+        const seen = new Set();
+        const norm = s => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+        const maxRounds = Math.ceil(count / batchSize) + 2;
         setBusy(browser && !ai.browserModelLoaded() ? "Modell wird geladen…" : `Das Modell liest und schreibt ${count} Karten…`);
-        const text = await ai.generate({
-          prompt, signal, schema: cardSchema(sources.length > 0),
-          images: vision ? sources.map(x => x.blob) : [],
-          onText: t => busy(`Das Modell schreibt… ${Math.max(0, (t.match(/"front"/g) || []).length)} von ${count} Karten`),
-          onProgress: (msg, p) => busy(`Modell wird geladen: ${Math.round((p || 0) * 100)} %`),
-        });
-        const res = ai.parseJson(text);
-        const raw = Array.isArray(res?.cards) ? res.cards : Array.isArray(res) ? res : [];
-        const cards = [];
-        for (const c of raw) {
-          if (!c || !(c.front || c.image) || !(c.back || c.image)) continue;
-          const out = { front: String(c.front || "").trim(), back: String(c.back || "").trim() };
-          const im = c.image, src = im && sources[(+im.ref || 0) - 1];
-          if (src) {
-            let box = Array.isArray(im.box) && im.box.length === 4 ? im.box.map(Number) : [0, 0, 1, 1];
-            if (!(box[2] > box[0] && box[3] > box[1])) box = [0, 0, 1, 1];
-            out.src = src; out.box = box;
-            out.side = im.side === "front" ? "front" : "back";
-            try { out.canvas = cropCanvas(await src.s.render(1800), box); out.preview = scaleCanvas(out.canvas, 500).toDataURL("image/jpeg", 0.8); }
-            catch (e) { delete out.src; }
+        for (let round = 0; cards.length < count && round < maxRounds; round++) {
+          const n = Math.min(batchSize, count - cards.length);
+          const done = cards.length;
+          const text = await ai.generate({
+            prompt: makePrompt(n, cards.map(c => c.front)), signal, schema: cardSchema(sources.length > 0),
+            images: vision ? sources.map(x => x.blob) : [],
+            onText: t => busy(`Das Modell schreibt… ${Math.min(count, done + (t.match(/"front"/g) || []).length)} von ${count} Karten`),
+            onProgress: (msg, p) => busy(`Modell wird geladen: ${Math.round((p || 0) * 100)} %`),
+          });
+          const res = ai.parseJson(text);
+          if (!deckName && res?.deckName) deckName = String(res.deckName);
+          const raw = Array.isArray(res?.cards) ? res.cards : Array.isArray(res) ? res : [];
+          let added = 0;
+          for (const c of raw) {
+            if (cards.length >= count) break;
+            if (!c || !(c.front || c.image) || !(c.back || c.image)) continue;
+            const out = { front: String(c.front || "").trim(), back: String(c.back || "").trim() };
+            const key = norm(out.front + (out.front ? "" : out.back));
+            if (key && seen.has(key)) continue;
+            seen.add(key);
+            const im = c.image, src = im && sources[(+im.ref || 0) - 1];
+            if (src) {
+              let box = Array.isArray(im.box) && im.box.length === 4 ? im.box.map(Number) : [0, 0, 1, 1];
+              if (!(box[2] > box[0] && box[3] > box[1])) box = [0, 0, 1, 1];
+              out.src = src; out.box = box;
+              out.side = im.side === "front" ? "front" : "back";
+              try { out.canvas = cropCanvas(await src.s.render(1800), box); out.preview = scaleCanvas(out.canvas, 500).toDataURL("image/jpeg", 0.8); }
+              catch (e) { delete out.src; }
+            }
+            cards.push(out);
+            added++;
           }
-          cards.push(out);
+          if (!added) break; // Modell liefert nichts Neues mehr
         }
         if (!cards.length) throw new Error("Das Modell hat keine Karten geliefert. Versuch es noch einmal oder nimm ein größeres Modell.");
-        results = { name: String(res?.deckName || "Neuer Stapel").slice(0, 60), cards, cut };
+        results = { name: (deckName || "Neuer Stapel").slice(0, 60), cards, cut, wanted: count };
         showResults();
       } catch (e) {
-        $out.innerHTML = e.name === "AbortError" ? `<p class="muted">Abgebrochen.</p>` : `<p style="color:var(--bad)">${esc(e.message || String(e))}</p>`;
+        // Bereits erstellte Karten behalten, wenn ein späterer Durchgang scheitert oder gestoppt wird
+        if (cards.length) {
+          results = { name: (deckName || "Neuer Stapel").slice(0, 60), cards, cut, wanted: count, stopped: e.name === "AbortError" ? "Gestoppt." : (e.message || String(e)) };
+          showResults();
+        } else {
+          $out.innerHTML = e.name === "AbortError" ? `<p class="muted">Abgebrochen.</p>` : `<p style="color:var(--bad)">${esc(e.message || String(e))}</p>`;
+        }
       } finally { $go.disabled = false; }
     };
 
@@ -828,6 +906,7 @@ ${hint ? `Thema / Hinweise der lernenden Person:\n"""\n${hint}\n"""\n` : ""}${ma
       const withImg = results.cards.filter(c => c.canvas).length;
       $out.innerHTML = `
         <div class="row" style="margin-bottom:10px"><h3>${results.cards.length} Vorschläge${withImg ? ` · ${withImg} mit Bild` : ""}</h3><span class="spacer"></span><button class="ghost" id="gall">Alle abwählen</button></div>
+        ${results.wanted && results.cards.length < results.wanted ? `<p class="note small">${results.stopped ? esc(results.stopped) + " " : ""}Das Modell hat ${results.cards.length} von ${results.wanted} Karten geliefert.${results.stopped ? "" : " Der Stoff gibt vermutlich nicht mehr unterschiedliche Karten her. Mit „Karten erstellen“ kannst du es erneut versuchen."}</p>` : ""}
         ${results.cut ? `<p class="note small">Die Dokumente waren zu lang für das Modell und wurden gekürzt. Für den Rest kannst du im Textfeld z. B. „ab Seite 10“ angeben, eine größere Kontextlänge einstellen oder das Dokument aufteilen.</p>` : ""}
         <div class="gen-list">${results.cards.map((c, i) => `
           <div class="gen-item"><input type="checkbox" id="gc${i}" checked aria-label="Karte übernehmen"><span>

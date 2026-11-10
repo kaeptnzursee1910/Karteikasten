@@ -32,7 +32,7 @@ export const getAllDecks = () => tx("decks", "readonly", s => s.getAll());
 export const putDeck = deck => tx("decks", "readwrite", s => s.put(deck));
 export const deleteDeck = id => tx("decks", "readwrite", s => s.delete(id));
 
-export const putImage = (id, blob) => tx("images", "readwrite", s => s.put(blob, id));
+export const putImage = (id, blob) => tx("images", "readwrite", s => s.put(blob, id)).then(() => id);
 export const getImage = id => tx("images", "readonly", s => s.get(id));
 export const deleteImage = id => tx("images", "readwrite", s => s.delete(id));
 

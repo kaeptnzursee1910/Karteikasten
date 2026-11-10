@@ -107,6 +107,17 @@ In der App als Adresse `http://<IP-des-Rechners>:11434` eintragen.
 
 Im Repo unter *Settings → Pages* „Deploy from a branch“ mit `main` und `/ (root)` wählen. Die App ist dann unter `https://<name>.github.io/Karteikasten/` erreichbar. Am besten passt das zum Modell im Browser oder zu Ollama auf demselben Rechner.
 
+## Als Artefakt auf claude.ai
+
+Unter `artifact/` liegt eine Variante für claude.ai-Artefakte. Sie nutzt denselben Code wie die App; nur zwei Module werden beim Veröffentlichen ersetzt:
+
+- `artifact/store-artifact.js` statt `js/store.js`: Stapel liegen in der Datenbank des Artefakts (Sammlung `decks`), Bilder im Asset-Speicher. So sind die Stapel auf allen Geräten verfügbar, und Claude kann im Chat Stapel anlegen und Bilder (z. B. selbst gezeichnete SVG-Grafiken) einfügen.
+- `artifact/ai-artifact.js` statt `js/ai.js`: Karten erstellt Claude über das Artefakt, ohne API-Schlüssel.
+
+Veröffentlicht wird `artifact/index.html` mit diesen Dateien: `css/app.css`, `js/app.js`, `js/docs.js`, `js/textformat.js`, `js/store.js` (aus `artifact/store-artifact.js`), `js/ai.js` (aus `artifact/ai-artifact.js`), `vendor/pdfjs/pdf.min.js`, `vendor/pdfjs/pdf.worker.min.js`, `vendor/mammoth/mammoth.browser.min.js`.
+
+Ein Stapel in der Sammlung `decks` hat dieselbe Form wie in der App: `{id, name, color, createdAt, updatedAt, cards: [{id, front, back, frontImg?, backImg?, box, due}]}`. Bilder stehen als `img:<Asset-ID>` darin.
+
 ## Aufbau
 
 ```

@@ -18,13 +18,20 @@
   --f-body: "Atkinson Hyperlegible", -apple-system, "Segoe UI", system-ui, sans-serif;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --desk: #12161e; --paper: #1d2330; --ink: #e8ecf3; --muted: #9aa5b8; --line: #2e3646;
     --rule: #2c3d5c; --redline: #e0645f; --accent: #7c97f2; --accent-ink: #0e1426; --soft: #24304a;
     --good: #5cc283; --warn: #e2a94a; --bad: #ef7466;
     --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
     color-scheme: dark;
   }
+}
+:root[data-theme="dark"] {
+    --desk: #12161e; --paper: #1d2330; --ink: #e8ecf3; --muted: #9aa5b8; --line: #2e3646;
+    --rule: #2c3d5c; --redline: #e0645f; --accent: #7c97f2; --accent-ink: #0e1426; --soft: #24304a;
+    --good: #5cc283; --warn: #e2a94a; --bad: #ef7466;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+    color-scheme: dark;
 }
 * { box-sizing: border-box; }
 html, body { min-height: 100%; }

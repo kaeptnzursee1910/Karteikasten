@@ -42,14 +42,29 @@ async function imageUrl(id) {
 }
 function hydrate(root = document) {
   root.querySelectorAll("img[data-img]:not([src])").forEach(async img => {
-    const url = await imageUrl(img.dataset.img);
+    const url = store.imageUrl ? store.imageUrl(img.dataset.img) : await imageUrl(img.dataset.img);
     if (url) img.src = url; else img.alt = "Bild fehlt";
   });
 }
 async function storeImage(canvas) {
-  const id = uid();
-  await store.putImage(id, await toBlob(scaleCanvas(canvas, 1400)));
+  // Der Speicher kann eine eigene Kennung vergeben (Asset-Speicher im Artefakt)
+  const id = await store.putImage(uid(), await toBlob(scaleCanvas(canvas, 1400)));
   return "img:" + id;
+}
+
+/** Datei anbieten: im Artefakt über die Download-Freigabe, sonst als normaler Download. */
+async function saveFile(filename, blob) {
+  if (ai.ARTIFACT) {
+    const downloads = await window.claude?.use?.("downloads");
+    if (!downloads) throw new Error("Speichern ist in dieser Ansicht nicht möglich.");
+    await downloads.save({ filename, data: blob });
+    return;
+  }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
 }
 function dropImg(ref) {
   if (!ref) return;
@@ -89,6 +104,7 @@ function render() {
 
 function aiStatus() {
   const ok = ai.isConfigured();
+  if (ai.ARTIFACT) return `<span class="status"><i class="${ok ? "ok" : "warn"}"></i>${ok ? "KI: Claude" : "Claude ist hier nicht verfügbar"}</span>`;
   return `<button class="ghost sm status" data-act="settings" title="KI-Einstellungen"><i class="${ok ? "ok" : "warn"}"></i>${ok ? `KI: ${esc(ai.modelLabel())} (${esc(ai.providerLabel())})` : "KI einrichten"}</button>`;
 }
 
@@ -306,13 +322,9 @@ function deckSheet(deck) {
         const ok = await copyText(deckToText(deck), sh.querySelector("#dtfallback"));
         sh.querySelector("#dtmsg").textContent = ok ? "Kopiert." : "Text unten markiert, bitte selbst kopieren.";
       };
-      sh.querySelector("#dtsave").onclick = () => {
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(new Blob([deckToText(deck)], { type: "text/plain;charset=utf-8" }));
-        a.download = deck.name.replace(/[\\/:*?"<>|]+/g, "-") + ".txt";
-        document.body.appendChild(a); a.click(); a.remove();
-        setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-      };
+      sh.querySelector("#dtsave").onclick = () =>
+        saveFile(deck.name.replace(/[\\/:*?"<>|]+/g, "-") + ".txt", new Blob([deckToText(deck)], { type: "text/plain;charset=utf-8" }))
+          .catch(e => { sh.querySelector("#dtmsg").textContent = e.message || "Nicht gespeichert."; });
     }
     if (!isNew) {
       sh.querySelector("#deldeck").onclick = () => { sh.querySelector("#delconfirm").hidden = false; };
@@ -676,11 +688,14 @@ function menuSheet() {
   const cards = decks.reduce((n, d) => n + d.cards.length, 0);
   openSheet(`
     <div class="sheet-head"><h2>Daten & Einstellungen</h2><button class="icon" data-act="close" aria-label="Schließen">✕</button></div>
-    <button data-act="settings" style="justify-content:flex-start">✦ KI-Modell einstellen</button>
+    ${ai.ARTIFACT ? "" : `<button data-act="settings" style="justify-content:flex-start">✦ KI-Modell einstellen</button>`}
     <button data-act="import" style="justify-content:flex-start">📥 Karten importieren (Text aus dem Chat, JSON, CSV)</button>
     <div class="note">
-      <b>Alles bleibt auf diesem Gerät.</b>
-      <span>${decks.length} Stapel mit ${cards} Karten sind in diesem Browser gespeichert. Um sie auf ein anderes Gerät zu bringen oder zu sichern, exportiere eine Sicherungsdatei und importiere sie dort.</span>
+      ${ai.ARTIFACT
+        ? `<b>Gespeichert in diesem Artefakt.</b>
+      <span>${decks.length} Stapel mit ${cards} Karten. Du siehst sie auf allen Geräten, auf denen du bei claude.ai angemeldet bist. Sicherungsdateien lassen sich zwischen dieser Version und der App aus dem GitHub-Repo austauschen.</span>`
+        : `<b>Alles bleibt auf diesem Gerät.</b>
+      <span>${decks.length} Stapel mit ${cards} Karten sind in diesem Browser gespeichert. Um sie auf ein anderes Gerät zu bringen oder zu sichern, exportiere eine Sicherungsdatei und importiere sie dort.</span>`}
     </div>
     <div class="row">
       <button id="mexport">Sicherung exportieren</button>
@@ -698,12 +713,10 @@ function menuSheet() {
         if (blob) images[ref.slice(4)] = await blobToDataUrl(blob);
       }
       const data = JSON.stringify({ app: "karteikasten", version: 1, exportedAt: new Date().toISOString(), decks, images });
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(new Blob([data], { type: "application/json" }));
-      a.download = `karteikasten-${new Date().toISOString().slice(0, 10)}.json`;
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-      msg.textContent = "Sicherung gespeichert.";
+      try {
+        await saveFile(`karteikasten-${new Date().toISOString().slice(0, 10)}.json`, new Blob([data], { type: "application/json" }));
+        msg.textContent = "Sicherung gespeichert.";
+      } catch (e) { msg.textContent = e.message || "Nicht gespeichert."; }
     };
     sh.querySelector("#mimport").onchange = async e => {
       const f = e.target.files[0];
@@ -719,11 +732,17 @@ function menuSheet() {
 }
 
 async function importBackup(data) {
-  for (const [id, url] of Object.entries(data.images || {})) await store.putImage(id, await (await fetch(url)).blob());
   let added = 0, updated = 0;
+  const newIds = new Map();
   for (const d of data.decks) {
     const cur = deckById(d.id);
     if (cur && (cur.updatedAt || 0) >= (d.updatedAt || 0)) continue;
+    for (const c of d.cards || []) for (const side of ["frontImg", "backImg"]) {
+      const old = c[side]?.slice(4), url = old && data.images?.[old];
+      if (!url) continue;
+      if (!newIds.has(old)) newIds.set(old, await store.putImage(old, await (await fetch(url)).blob()));
+      c[side] = "img:" + newIds.get(old);
+    }
     cur ? updated++ : added++;
     await saveDeck(d);
   }
@@ -855,7 +874,10 @@ function cardSchema(withImages) {
 const MAX_CARDS = 200;
 
 function genSheet(targetId) {
-  if (!ai.isConfigured()) { settingsSheet(() => genSheet(targetId)); return; }
+  if (!ai.isConfigured()) {
+    if (ai.ARTIFACT) { toast("Claude ist in dieser Ansicht nicht verfügbar."); return; }
+    settingsSheet(() => genSheet(targetId)); return;
+  }
   const browser = ai.settings.provider === "browser", cloud = ai.settings.provider === "cloud";
   const currentModel = cloud ? ai.cloudModel() : ai.settings.model;
   let kind = "qa", results = null, useImages = true;
@@ -870,7 +892,7 @@ function genSheet(targetId) {
       <div class="field" style="flex:1 1 240px"><label class="label" for="gmodel">Modell (${esc(ai.providerLabel())})</label>
         <select id="gmodel">${browser ? browserOptions() : `<option value="${esc(currentModel)}">${esc(currentModel)}</option>`}</select>
       </div>
-      <button class="ghost" data-act="settings">Einstellungen</button>
+      ${ai.ARTIFACT ? "" : `<button class="ghost" data-act="settings">Einstellungen</button>`}
     </div>
     ${cloud ? `<p class="small muted">Dokumente, Bilder und Hinweise werden zum Erstellen an ${esc(ai.providerLabel())} geschickt.</p>` : ""}
     <div class="field">
@@ -1214,15 +1236,22 @@ document.addEventListener("touchend", e => {
   try {
     decks = await store.getAllDecks();
   } catch (e) {
-    $app.innerHTML = `<div class="empty"><h2>Speicher nicht verfügbar</h2><p class="muted">Der Browser erlaubt dieser Seite keinen lokalen Speicher (z. B. im privaten Modus). Öffne die App in einem normalen Fenster.</p></div>`;
+    $app.innerHTML = ai.ARTIFACT
+      ? `<div class="empty"><h2>Speicher nicht verfügbar</h2><p class="muted">${esc(e.message || "Die Stapel konnten nicht geladen werden.")}</p></div>`
+      : `<div class="empty"><h2>Speicher nicht verfügbar</h2><p class="muted">Der Browser erlaubt dieser Seite keinen lokalen Speicher (z. B. im privaten Modus). Öffne die App in einem normalen Fenster.</p></div>`;
     return;
   }
   await ai.loadSettings();
-  if (!decks.length && !(await store.getSetting("seeded"))) {
+  // Stapel, die anderswo geändert werden (z. B. von Claude im Chat), live übernehmen
+  store.subscribe?.(list => {
+    decks = list;
+    if (!$layer.innerHTML && view.name !== "study") render();
+  });
+  if (!ai.ARTIFACT && !decks.length && !(await store.getSetting("seeded"))) {
     await saveDeck(exampleDeck());
     await store.setSetting("seeded", true);
   }
   store.requestPersistence();
   render();
-  if ("serviceWorker" in navigator && window.isSecureContext) navigator.serviceWorker.register("sw.js").catch(() => {});
+  if (!ai.ARTIFACT && "serviceWorker" in navigator && window.isSecureContext) navigator.serviceWorker.register("sw.js").catch(() => {});
 })();

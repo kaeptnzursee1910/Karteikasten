@@ -1,6 +1,6 @@
 // Service Worker: hält die App-Dateien für die Nutzung ohne Netz bereit.
 // Bei Änderungen an App-Dateien CACHE hochzählen.
-const CACHE = "karteikasten-v2";
+const CACHE = "karteikasten-v3";
 const SHELL = [
   "./", "index.html", "manifest.webmanifest", "css/app.css",
   "js/app.js", "js/ai.js", "js/docs.js", "js/store.js",

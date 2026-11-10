@@ -88,8 +88,7 @@ function render() {
 
 function aiStatus() {
   const ok = ai.isConfigured();
-  const where = ai.settings.provider === "browser" ? "im Browser" : (ai.settings.api === "ollama" ? "Ollama" : "Server");
-  return `<button class="ghost sm status" data-act="settings" title="KI-Einstellungen"><i class="${ok ? "ok" : "warn"}"></i>${ok ? `KI: ${esc(ai.modelLabel())} (${where})` : "KI einrichten"}</button>`;
+  return `<button class="ghost sm status" data-act="settings" title="KI-Einstellungen"><i class="${ok ? "ok" : "warn"}"></i>${ok ? `KI: ${esc(ai.modelLabel())} (${esc(ai.providerLabel())})` : "KI einrichten"}</button>`;
 }
 
 function renderHome() {
@@ -481,11 +480,12 @@ function settingsSheet(then) {
   const customBrowserModel = !ai.BROWSER_MODELS.some(m => m.id === s.browserModel);
   openSheet(`
     <div class="sheet-head"><h2>KI-Modell</h2><button class="icon" data-act="close" aria-label="Schließen">✕</button></div>
-    <p class="small muted">Karten werden ausschließlich mit einem lokalen Modell erstellt. Deine Dokumente verlassen dein Gerät bzw. dein Heimnetz nicht.</p>
+    <p class="small muted">Mit einem lokalen Modell bleiben deine Dokumente auf deinem Gerät bzw. in deinem Heimnetz. Mit einer Cloud-KI wie Claude werden sie an den Anbieter geschickt.</p>
     <div class="field"><span class="label">Wo läuft das Modell?</span>
       <div class="seg" id="sprov">
         <button data-p="server" class="${s.provider === "server" ? "on" : ""}">Auf einem Rechner (Ollama, LM Studio)</button>
         <button data-p="browser" class="${s.provider === "browser" ? "on" : ""}">Direkt im Browser (WebGPU)</button>
+        <button data-p="cloud" class="${s.provider === "cloud" ? "on" : ""}">Cloud-KI (Claude, OpenAI, Gemini …)</button>
       </div>
     </div>
 
@@ -531,11 +531,34 @@ function settingsSheet(then) {
       <div class="bar-progress" id="sbbar" hidden><div></div></div>
     </div>
 
+    <div id="pcloud" ${s.provider === "cloud" ? "" : "hidden"} style="display:grid;gap:14px">
+      <div class="note small">Die Karten erstellt dann ein Cloud-Dienst. Deine Dokumente, Bilder und Hinweise werden dafür an den gewählten Anbieter geschickt, und die Nutzung wird über dein Konto dort abgerechnet. Der API-Schlüssel wird nur in diesem Browser gespeichert.</div>
+      <div class="field"><label class="label" for="ccsvc">Anbieter</label>
+        <select id="ccsvc">${Object.entries(ai.CLOUD_SERVICES).map(([k, v]) => `<option value="${k}" ${k === s.cloudService ? "selected" : ""}>${esc(v.label)}</option>`).join("")}</select>
+      </div>
+      <div class="field" id="ccurlwrap" hidden><label class="label" for="ccurl">Adresse der API</label>
+        <input id="ccurl" value="${esc(s.cloudBaseUrl)}" placeholder="https://…/v1" autocapitalize="off" autocorrect="off" spellcheck="false">
+      </div>
+      <div class="field"><label class="label" for="cckey">API-Schlüssel</label>
+        <input id="cckey" type="password" value="${esc(s.cloudKeys[s.cloudService] || "")}" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+        <span class="small muted" id="cckeyhint"></span>
+      </div>
+      <div class="row"><button id="cctest">Verbinden & Modelle laden</button><span class="small muted" id="cctestmsg"></span></div>
+      <div class="field"><label class="label" for="ccmodel">Modell</label>
+        <input id="ccmodel" list="ccmodels" value="${esc(s.cloudModels[s.cloudService] ?? (ai.CLOUD_SERVICES[s.cloudService]?.model || ""))}" autocapitalize="off" autocorrect="off" spellcheck="false"><datalist id="ccmodels"></datalist>
+      </div>
+      <label class="check small" id="ccvisionrow"><input type="checkbox" id="ccvision" ${s.cloudVision ? "checked" : ""}> Das Modell kann Bilder sehen. Dann werden Seiten mit Abbildungen mitgeschickt.</label>
+    </div>
+
     <div class="row"><span class="spacer"></span><button class="primary" id="ssave">Speichern</button></div>
   `, sh => {
     let provider = s.provider;
     const q = id => sh.querySelector(id);
+    let svc = s.cloudService;
     const read = () => ({
+      cloudService: svc, cloudBaseUrl: q("#ccurl").value.trim(), cloudVision: q("#ccvision").checked,
+      cloudKeys: { ...s.cloudKeys, [svc]: q("#cckey").value.trim() },
+      cloudModels: { ...s.cloudModels, [svc]: q("#ccmodel").value.trim() },
       provider, api: q("#sapi").value, baseUrl: q("#surl").value.trim(), model: q("#smodel").value.trim(),
       vision: q("#svision").checked, numCtx: +q("#sctx").value, browserModel: q("#sbmodel").value === "__custom" ? (q("#sbcustom").value.trim() || ai.BROWSER_MODELS[0].id) : q("#sbmodel").value,
     });
@@ -546,8 +569,37 @@ function settingsSheet(then) {
       sh.querySelectorAll("#sprov button").forEach(x => x.classList.toggle("on", x === b));
       q("#pserver").hidden = provider !== "server";
       q("#pbrowser").hidden = provider !== "browser";
+      q("#pcloud").hidden = provider !== "cloud";
       apply();
     });
+    // Felder des gewählten Cloud-Dienstes füllen
+    const fillCloud = () => {
+      const info = ai.CLOUD_SERVICES[svc];
+      q("#ccurlwrap").hidden = svc !== "custom";
+      q("#cckey").value = s.cloudKeys[svc] || "";
+      q("#cckey").placeholder = info.keyHint || "";
+      q("#cckeyhint").textContent = info.keyPage ? `Einen Schlüssel bekommst du unter ${info.keyPage}.` : "";
+      q("#ccmodel").value = s.cloudModels[svc] ?? (info.model || "");
+      q("#ccmodel").placeholder = svc === "anthropic" ? "claude-opus-5-5" : "Erst verbinden, dann Modell wählen";
+      q("#ccmodels").innerHTML = "";
+      q("#ccvisionrow").hidden = svc === "anthropic";
+      q("#cctestmsg").textContent = "";
+    };
+    fillCloud();
+    q("#ccsvc").onchange = () => { apply(); svc = q("#ccsvc").value; fillCloud(); apply(); };
+    ["#ccurl", "#cckey", "#ccmodel", "#ccvision"].forEach(id => q(id).addEventListener("input", apply));
+    q("#ccvision").onchange = apply;
+    q("#cctest").onclick = async () => {
+      apply();
+      const msg = q("#cctestmsg");
+      msg.textContent = "Verbinde…";
+      try {
+        const models = await ai.listModels();
+        q("#ccmodels").innerHTML = models.map(m => `<option value="${esc(m)}">`).join("");
+        if (!q("#ccmodel").value && models[0]) { q("#ccmodel").value = models[0]; apply(); }
+        msg.textContent = `Verbunden: ${models.length} ${models.length === 1 ? "Modell" : "Modelle"} verfügbar.`;
+      } catch (e) { msg.textContent = e.message || String(e); }
+    };
     q("#sapi").onchange = () => {
       q("#surl").placeholder = ai.defaultBaseUrl(q("#sapi").value);
       q("#sctxwrap").hidden = q("#sapi").value !== "ollama";
@@ -678,7 +730,8 @@ const MAX_CARDS = 200;
 
 function genSheet(targetId) {
   if (!ai.isConfigured()) { settingsSheet(() => genSheet(targetId)); return; }
-  const browser = ai.settings.provider === "browser";
+  const browser = ai.settings.provider === "browser", cloud = ai.settings.provider === "cloud";
+  const currentModel = cloud ? ai.cloudModel() : ai.settings.model;
   let kind = "qa", results = null, useImages = true;
   const deckOptions = decks.map(d => `<option value="${d.id}" ${d.id === targetId ? "selected" : ""}>${esc(d.name)}</option>`).join("");
   const browserOptions = () => {
@@ -688,11 +741,12 @@ function genSheet(targetId) {
   openSheet(`
     <div class="sheet-head"><h2>✦ Karten mit KI erstellen</h2><button class="icon" data-act="close" aria-label="Schließen">✕</button></div>
     <div class="row" style="align-items:flex-end">
-      <div class="field" style="flex:1 1 240px"><label class="label" for="gmodel">Modell${browser ? " (im Browser)" : ""}</label>
-        <select id="gmodel">${browser ? browserOptions() : `<option value="${esc(ai.settings.model)}">${esc(ai.settings.model)}</option>`}</select>
+      <div class="field" style="flex:1 1 240px"><label class="label" for="gmodel">Modell (${esc(ai.providerLabel())})</label>
+        <select id="gmodel">${browser ? browserOptions() : `<option value="${esc(currentModel)}">${esc(currentModel)}</option>`}</select>
       </div>
       <button class="ghost" data-act="settings">Einstellungen</button>
     </div>
+    ${cloud ? `<p class="small muted">Dokumente, Bilder und Hinweise werden zum Erstellen an ${esc(ai.providerLabel())} geschickt.</p>` : ""}
     <div class="field">
       <span class="label">Dokumente</span>
       <div class="drop" id="gdrop">
@@ -738,23 +792,14 @@ function genSheet(targetId) {
     if (!browser) {
       ai.listModels().then(models => {
         if (!models.length) return;
-        const cur = ai.settings.model;
+        const cur = currentModel;
         $model.innerHTML = [...new Set([cur, ...models])].filter(Boolean).map(m => `<option value="${esc(m)}" ${m === cur ? "selected" : ""}>${esc(m)}</option>`).join("");
       }).catch(() => { /* Server gerade nicht erreichbar: aktuelles Modell bleibt */ });
     }
-    $model.onchange = async () => {
-      if (browser) ai.settings.browserModel = $model.value;
-      else {
-        ai.settings.model = $model.value;
-        const v = await ai.detectVision($model.value);
-        if (v != null) ai.settings.vision = v;
-      }
-      await ai.saveSettings();
-      drawDocs();
-    };
+    $model.onchange = async () => { await ai.setModel($model.value); drawDocs(); };
 
     const $count = sh.querySelector("#gcount");
-    const batchSize = browser ? 10 : 20;
+    const batchSize = browser ? 10 : cloud ? 40 : 20;
     const countNote = () => {
       const n = parseInt($count.value, 10);
       const el = sh.querySelector("#gcountnote");
@@ -831,7 +876,14 @@ ${list}
 - Wenn eine Karte von einer Abbildung profitiert, deren Inhalt aus dem umgebenden Text klar hervorgeht, hänge sie an: "image": {"ref": <Bildnummer>, "side": "back"}.
 - Nur selten und nur, wenn du sicher bist, dass die Abbildung zum Inhalt der Karte passt.`;
 
-        const makePrompt = (n, existing) => `Erstelle genau ${n} Lern-Karteikarten.
+        // Lernstoff, Hinweise und Bildliste bleiben in allen Durchgängen gleich (bei Claude zwischengespeichert)
+        const context = [
+          hint ? `Thema / Hinweise der lernenden Person:\n"""\n${hint}\n"""` : "",
+          material ? `Dokumente:\n"""\n${material}\n"""` : "",
+          imgRules.trim(),
+        ].filter(Boolean).join("\n\n");
+
+        const makePrompt = (n, existing) => `Erstelle genau ${n} Lern-Karteikarten aus dem Stoff oben.
 
 Regeln:
 - ${STYLES[kind]}
@@ -839,15 +891,14 @@ Regeln:
 - Antworten kurz halten (höchstens etwa 40 Wörter).
 - Schreibe in der Sprache des Stoffs (bei einem Thema ohne Text: Deutsch).
 - Wenn Dokumente oder ein Text gegeben sind, nur Inhalte daraus verwenden und die wichtigsten Inhalte abdecken.
-- Schlage außerdem einen kurzen Stapelnamen vor (höchstens 5 Wörter).${imgRules}
+- Schlage außerdem einen kurzen Stapelnamen vor (höchstens 5 Wörter).
 ${existing.length ? `
 Diese Karten gibt es schon. Wiederhole sie nicht, sondern decke andere Inhalte ab:
 ${existing.slice(-80).map(f => "- " + f.slice(0, 120)).join("\n")}
 ` : ""}
 Antworte ausschließlich mit JSON in genau dieser Form:
 {"deckName": "…", "cards": [{"front": "…", "back": "…"${sources.length ? `, "image": {"ref": 1, ${vision ? `"box": [0.1, 0.2, 0.9, 0.6], ` : ""}"side": "back"}` : ""}}]}
-${sources.length ? `"image" nur bei Karten, die ein Bild bekommen; sonst weglassen.\n` : ""}
-${hint ? `Thema / Hinweise der lernenden Person:\n"""\n${hint}\n"""\n` : ""}${material ? `\nDokumente:\n"""\n${material}\n"""` : ""}`;
+${sources.length ? `"image" nur bei Karten, die ein Bild bekommen; sonst weglassen.` : ""}`;
 
         // Große Mengen in Durchgängen erstellen; lokale Modelle liefern sonst oft zu wenige Karten
         const seen = new Set();
@@ -858,7 +909,7 @@ ${hint ? `Thema / Hinweise der lernenden Person:\n"""\n${hint}\n"""\n` : ""}${ma
           const n = Math.min(batchSize, count - cards.length);
           const done = cards.length;
           const text = await ai.generate({
-            prompt: makePrompt(n, cards.map(c => c.front)), signal, schema: cardSchema(sources.length > 0),
+            prompt: makePrompt(n, cards.map(c => c.front)), context, signal, schema: cardSchema(sources.length > 0),
             images: vision ? sources.map(x => x.blob) : [],
             onText: t => busy(`Das Modell schreibt… ${Math.min(count, done + (t.match(/"front"/g) || []).length)} von ${count} Karten`),
             onProgress: (msg, p) => busy(`Modell wird geladen: ${Math.round((p || 0) * 100)} %`),

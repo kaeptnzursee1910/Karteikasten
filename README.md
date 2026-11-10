@@ -1,8 +1,8 @@
 # Karteikasten
 
-Karteikarten-App für iPad und Browser. Du lernst mit dem Leitner-System und lässt Karten von einem **lokalen KI-Modell** erstellen, auch aus PDFs, Word-Dokumenten und Fotos deiner Notizen. Bilder aus den Dokumenten können dabei auf den Karten landen.
+Karteikarten-App für iPad und Browser. Du lernst mit dem Leitner-System und lässt Karten von einem **lokalen KI-Modell** oder einer **Cloud-KI wie Claude** erstellen, auch aus PDFs, Word-Dokumenten und Fotos deiner Notizen. Bilder aus den Dokumenten können dabei auf den Karten landen.
 
-Alles bleibt bei dir: Die Karten liegen im Browser (IndexedDB), und die Dokumente gehen nur an dein eigenes Modell auf deinem Rechner oder in deinem Browser.
+Die Karten liegen im Browser (IndexedDB). Mit einem lokalen Modell bleiben auch die Dokumente bei dir. Mit einer Cloud-KI gehen Dokumente, Bilder und Hinweise zum Erstellen an den gewählten Anbieter.
 
 ## Funktionen
 
@@ -56,6 +56,17 @@ In der App unter **KI-Modell** die Schnittstelle „OpenAI-kompatibel“ wählen
 
 Unter **KI-Modell** „Direkt im Browser“ wählen. Das Modell wird einmal heruntergeladen (1–2,2 GB) und läuft dann offline auf dem Gerät. Voraussetzung ist WebGPU: Safari ab iPadOS 26, am Rechner aktuelles Chrome oder Edge. Die kleinen Modelle sehen keine Bilder und schaffen nur kürzere Dokumente (etwa 5 Seiten Text).
 
+### Variante D: Cloud-KI (Claude, OpenAI, Gemini, Mistral, OpenRouter)
+
+Unter **KI-Modell** „Cloud-KI“ wählen, den Anbieter auswählen, den API-Schlüssel eintragen und auf „Verbinden & Modelle laden“ tippen. Dafür ist kein Rechner nötig, nur Internet. Das funktioniert auch über GitHub Pages.
+
+- **Claude** läuft über das offizielle Anthropic-SDK. Voreingestellt ist `claude-opus-5-5`; alle Modelle deines Kontos stehen zur Auswahl. Claude sieht die Seiten mit Abbildungen und schneidet passende Ausschnitte aus. Einen API-Schlüssel gibt es unter console.anthropic.com. Ein claude.ai-Abo (Pro, Max) enthält keine API-Nutzung.
+  - Bei Claude Opus 5.5, Opus 5, Sonnet 5.5 und Fable 5.1/5.2 ist das serverseitige Ersatzmodell bei Ablehnungen eingeschaltet (`fallbacks: "default"`): Lehnt das Modell eine Anfrage ab, beantwortet Anthropic sie automatisch mit einem passenden anderen Modell.
+  - Bei mehreren Durchgängen wird der Lernstoff zwischengespeichert (Prompt-Caching). Folgedurchgänge kosten dadurch deutlich weniger.
+- **OpenAI, Google Gemini, Mistral, OpenRouter** und andere Dienste mit OpenAI-kompatibler Schnittstelle laufen über diese Schnittstelle. Für einen anderen Dienst die Adresse der API selbst eintragen.
+
+Der API-Schlüssel wird nur im Browser des Geräts gespeichert und direkt an den Anbieter geschickt. Gib die App mit eingetragenem Schlüssel nicht an andere weiter. Lege beim Anbieter am besten ein Ausgabenlimit fest. Nicht jeder Dienst erlaubt Anfragen direkt aus dem Browser; dann erscheint ein Verbindungsfehler.
+
 ### Ohne `server.py` direkt mit Ollama
 
 Ollama muss Anfragen von der Seite erlauben, und für den Zugriff vom iPad im Netzwerk erreichbar sein:
@@ -78,13 +89,13 @@ Im Repo unter *Settings → Pages* „Deploy from a branch“ mit `main` und `/ 
 index.html            Einstieg
 css/app.css           Gestaltung (hell/dunkel nach Systemeinstellung)
 js/app.js             Oberfläche: Stapel, Lernen, Karten-Editor, KI-Erstellung
-js/ai.js              Anbindung lokaler Modelle (Ollama, OpenAI-kompatibel, WebLLM)
+js/ai.js              Anbindung der Modelle (Ollama, OpenAI-kompatibel, WebLLM, Claude, Cloud-Dienste)
 js/docs.js            Import von PDF, Word, Bildern und Text
 js/store.js           Speicher im Browser (IndexedDB)
 sw.js                 Offline-Cache (nur über https oder localhost)
 server.py             Bereitstellung im Heimnetz und Proxy zum Modellserver
 Start.bat             Start per Doppelklick unter Windows
-vendor/               pdf.js 3.11.174 und mammoth 1.6.0 (mit Lizenzen)
+vendor/               pdf.js 3.11.174, mammoth 1.6.0 und das Anthropic-SDK 1.3.0 als Browser-Bundle (mit Lizenzen)
 ```
 
 WebLLM (0.2.86) wird bei Bedarf von jsDelivr geladen.

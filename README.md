@@ -18,6 +18,30 @@ Die Karten liegen im Browser (IndexedDB). Mit einem lokalen Modell bleiben auch 
 - **Sicherung:** Export und Import als JSON-Datei, auch um Karten auf ein anderes Gerät zu bringen.
 - **Als App installierbar:** in Safari über „Teilen“ → „Zum Home-Bildschirm“.
 
+## Karten importieren: das Karteikasten-Format
+
+Karten lassen sich als einfacher Text importieren, z. B. direkt aus einem Chat mit Claude oder einer anderen KI. In der App: „⋯“ → „Karten importieren“ oder im Stapel „Importieren“. Dort den Text einfügen oder eine Datei wählen.
+
+```
+Stapel: Zellbiologie
+
+F: Was ist eine Zelle?
+A: Die kleinste lebende Einheit eines Organismus.
+
+F: Welche Aufgaben hat der Zellkern?
+A: Er speichert die DNA
+und steuert die Vorgänge in der Zelle.
+```
+
+- `Stapel: Name` beginnt einen Stapel. Ein Text darf mehrere Stapel enthalten. Ohne diese Zeile fragt die App, wohin die Karten sollen.
+- `F:` beginnt eine Karte (Vorderseite), `A:` ist die Rückseite. Weitere Zeilen gehören zum Feld davor, so sind mehrzeilige Antworten möglich.
+- Auch erkannt werden `Frage:`/`Antwort:`, `Q:`, fett gesetzte Markierungen (`**F:**`) und Codeblöcke (```` ``` ````). Text vor und nach den Karten wird ignoriert.
+- Karten, deren Vorderseite es im Zielstapel schon gibt, werden übersprungen.
+
+Außerdem liest der Import **JSON** (`{"deckName": "…", "cards": [{"front": "…", "back": "…"}]}`), **Tabellen aus Anki oder Quizlet** (Vorder- und Rückseite durch Tabulator getrennt) und **CSV** mit Semikolon.
+
+Die Schaltfläche „Anleitung für den KI-Chat kopieren“ kopiert eine fertige Anweisung, mit der eine KI Karten genau in diesem Format ausgibt. Umgekehrt kopiert „Karten als Text kopieren“ (im Stapel unter „⋯“) einen Stapel in dieses Format.
+
 ## Starten
 
 Die App ist eine statische Webseite ohne Build-Schritt. Sie muss über `http://` bzw. `https://` geöffnet werden, nicht als Datei.
@@ -92,6 +116,7 @@ js/app.js             Oberfläche: Stapel, Lernen, Karten-Editor, KI-Erstellung
 js/ai.js              Anbindung der Modelle (Ollama, OpenAI-kompatibel, WebLLM, Claude, Cloud-Dienste)
 js/docs.js            Import von PDF, Word, Bildern und Text
 js/store.js           Speicher im Browser (IndexedDB)
+js/textformat.js      Import und Export im Karteikasten-Textformat, JSON und CSV
 sw.js                 Offline-Cache (nur über https oder localhost)
 server.py             Bereitstellung im Heimnetz und Proxy zum Modellserver
 Start.bat             Start per Doppelklick unter Windows

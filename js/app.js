@@ -1,5 +1,6 @@
 import * as store from "./store.js";
 import * as ai from "./ai.js";
+import { parseCards, deckToText, FORMAT_EXAMPLE, CHAT_PROMPT } from "./textformat.js";
 import { docs, DOC_ACCEPT, importFiles, removeDoc, loadImage, imageSource, scaleCanvas, cropCanvas, toBlob } from "./docs.js";
 
 const COLORS = ["#d9534f", "#2847b8", "#2f8a4f", "#c07a12", "#7a3fb0", "#14879a"];
@@ -124,6 +125,7 @@ function renderHome() {
         <div class="row" style="justify-content:center">
           <button class="primary" data-act="gen">✦ Mit KI erstellen</button>
           <button data-act="newdeck">Stapel anlegen</button>
+          <button data-act="import">Karten importieren</button>
           <button class="ghost" data-act="example">Beispielstapel laden</button>
         </div>
       </div>`}
@@ -147,6 +149,7 @@ function renderDeck(deck) {
       <button class="primary" data-act="study" ${deck.cards.length ? "" : "disabled"}>${due ? `${due} fällige lernen` : "Alle wiederholen"}</button>
       ${due && due < deck.cards.length ? `<button data-act="studyall">Alle ${deck.cards.length} üben</button>` : ""}
       <button data-act="addcard">+ Karte</button>
+      <button data-act="import" data-id="${deck.id}">Importieren</button>
       <button data-act="gen" data-id="${deck.id}">✦ Karten mit KI</button>
     </div>
     ${deck.cards.length ? `<div class="cardlist">
@@ -283,6 +286,10 @@ function deckSheet(deck) {
     <div class="sheet-head"><h2>${isNew ? "Neuer Stapel" : "Stapel bearbeiten"}</h2><button class="icon" data-act="close" aria-label="Schließen">✕</button></div>
     <div class="field"><label class="label" for="deckname">Name</label><input id="deckname" value="${esc(deck?.name || "")}" placeholder="z. B. Biologie – Zellaufbau"></div>
     <div class="field"><span class="label">Farbe</span><div class="swatches">${COLORS.map(c => `<button class="swatch ${c === color ? "on" : ""}" data-c="${c}" style="background:${c}" aria-label="Farbe ${c}"></button>`).join("")}</div></div>
+    ${!isNew && deck.cards.length ? `<div class="field"><span class="label">Als Text</span>
+      <div class="row"><button class="sm" id="dtcopy">Karten als Text kopieren</button><button class="sm" id="dtsave">Als .txt-Datei speichern</button><span class="small muted" id="dtmsg"></span></div>
+      <textarea id="dtfallback" rows="6" hidden readonly></textarea>
+    </div>` : ""}
     <div class="row">${!isNew ? `<button class="danger" id="deldeck">Stapel löschen</button>` : ""}<span class="spacer"></span><button class="primary" id="savedeck">${isNew ? "Anlegen" : "Speichern"}</button></div>
     <p class="small" id="delconfirm" hidden><button class="danger" id="delyes">Ja, Stapel mit allen Karten löschen</button></p>
   `, sh => {
@@ -294,6 +301,19 @@ function deckSheet(deck) {
       d.name = name; d.color = color;
       saveDeck(d); closeSheet(); view = { name: "deck", id: d.id }; render();
     };
+    if (!isNew && deck.cards.length) {
+      sh.querySelector("#dtcopy").onclick = async () => {
+        const ok = await copyText(deckToText(deck), sh.querySelector("#dtfallback"));
+        sh.querySelector("#dtmsg").textContent = ok ? "Kopiert." : "Text unten markiert, bitte selbst kopieren.";
+      };
+      sh.querySelector("#dtsave").onclick = () => {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(new Blob([deckToText(deck)], { type: "text/plain;charset=utf-8" }));
+        a.download = deck.name.replace(/[\\/:*?"<>|]+/g, "-") + ".txt";
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+      };
+    }
     if (!isNew) {
       sh.querySelector("#deldeck").onclick = () => { sh.querySelector("#delconfirm").hidden = false; };
       sh.querySelector("#delyes").onclick = () => { removeDeck(deck.id); closeSheet(); view = { name: "home" }; render(); toast("Stapel gelöscht"); };
@@ -657,6 +677,7 @@ function menuSheet() {
   openSheet(`
     <div class="sheet-head"><h2>Daten & Einstellungen</h2><button class="icon" data-act="close" aria-label="Schließen">✕</button></div>
     <button data-act="settings" style="justify-content:flex-start">✦ KI-Modell einstellen</button>
+    <button data-act="import" style="justify-content:flex-start">📥 Karten importieren (Text aus dem Chat, JSON, CSV)</button>
     <div class="note">
       <b>Alles bleibt auf diesem Gerät.</b>
       <span>${decks.length} Stapel mit ${cards} Karten sind in diesem Browser gespeichert. Um sie auf ein anderes Gerät zu bringen oder zu sichern, exportiere eine Sicherungsdatei und importiere sie dort.</span>
@@ -689,19 +710,124 @@ function menuSheet() {
       if (!f) return;
       try {
         const data = JSON.parse(await f.text());
-        if (data.app !== "karteikasten" || !Array.isArray(data.decks)) throw new Error("Das ist keine Karteikasten-Sicherung.");
-        for (const [id, url] of Object.entries(data.images || {})) await store.putImage(id, await (await fetch(url)).blob());
-        let added = 0, updated = 0;
-        for (const d of data.decks) {
-          const cur = deckById(d.id);
-          if (cur && (cur.updatedAt || 0) >= (d.updatedAt || 0)) continue;
-          cur ? updated++ : added++;
-          await saveDeck(d);
-        }
-        msg.textContent = `Importiert: ${added} neue, ${updated} aktualisierte Stapel.`;
+        if (data.app !== "karteikasten" || !Array.isArray(data.decks)) throw new Error("Das ist keine Karteikasten-Sicherung. Karten als Text, JSON oder CSV importierst du über „Karten importieren“.");
+        msg.textContent = await importBackup(data);
         render();
       } catch (err) { msg.textContent = err.message || String(err); }
     };
+  });
+}
+
+async function importBackup(data) {
+  for (const [id, url] of Object.entries(data.images || {})) await store.putImage(id, await (await fetch(url)).blob());
+  let added = 0, updated = 0;
+  for (const d of data.decks) {
+    const cur = deckById(d.id);
+    if (cur && (cur.updatedAt || 0) >= (d.updatedAt || 0)) continue;
+    cur ? updated++ : added++;
+    await saveDeck(d);
+  }
+  return `Sicherung importiert: ${added} neue, ${updated} aktualisierte Stapel.`;
+}
+
+/* ---------- Karten importieren (Karteikasten-Textformat, JSON, Tabelle) ---------- */
+async function copyText(text, fallbackEl) {
+  try { await navigator.clipboard.writeText(text); return true; }
+  catch (e) {
+    if (fallbackEl) { fallbackEl.hidden = false; fallbackEl.value = text; fallbackEl.focus(); fallbackEl.select(); }
+    return false;
+  }
+}
+
+function importSheet(targetId) {
+  let parsed = { decks: [], skipped: 0 }, fileName = "";
+  openSheet(`
+    <div class="sheet-head"><h2>Karten importieren</h2><button class="icon" data-act="close" aria-label="Schließen">✕</button></div>
+    <p class="small muted">Füge Karten ein, die du z. B. in einem KI-Chat erstellt hast, oder wähle eine Datei. Erkannt werden das Karteikasten-Format (unten), JSON und Tabellen aus Anki oder Quizlet (Tabulator) bzw. CSV mit Semikolon.</p>
+    <div class="field"><label class="label" for="itext">Text</label>
+      <textarea id="itext" rows="9" placeholder="Stapel: …&#10;&#10;F: Frage&#10;A: Antwort" autocapitalize="off" spellcheck="false"></textarea>
+    </div>
+    <div class="row">
+      <label class="btn sm">📄 Datei wählen<input type="file" accept=".txt,.md,.json,.csv,.tsv,text/*,application/json" id="ifile"></label>
+      <button class="sm" id="icopy">Anleitung für den KI-Chat kopieren</button>
+      <span class="small muted" id="icopymsg"></span>
+    </div>
+    <textarea id="icopyfallback" rows="6" hidden readonly></textarea>
+    <details class="note"><summary>So sieht das Format aus</summary>
+      <pre style="white-space:pre-wrap;margin:0;font:inherit;font-size:.9rem">${esc(FORMAT_EXAMPLE)}</pre>
+      <span>„Stapel:“ beginnt einen Stapel (auch mehrere in einem Text), „F:“ eine neue Karte, „A:“ die Rückseite. Weitere Zeilen gehören zum Feld davor.</span>
+    </details>
+    <div id="ipreview"></div>
+  `, sh => {
+    const $text = sh.querySelector("#itext"), $prev = sh.querySelector("#ipreview");
+    const deckSelect = (i, name) => `<select data-target="${i}">
+        <option value="__new">Neuer Stapel „${esc(name)}“</option>
+        ${decks.map(d => `<option value="${d.id}" ${d.id === targetId ? "selected" : ""}>In „${esc(d.name)}“</option>`).join("")}
+      </select>`;
+    const show = () => {
+      if (parsed.backup) {
+        $prev.innerHTML = `<div class="note">Das ist eine Karteikasten-Sicherung mit ${parsed.backup.decks.length} Stapeln.</div>
+          <div class="row"><span class="spacer"></span><button class="primary" id="ibackup">Sicherung importieren</button></div>`;
+        sh.querySelector("#ibackup").onclick = async () => { toast(await importBackup(parsed.backup)); closeSheet(); render(); };
+        return;
+      }
+      const total = parsed.decks.reduce((n, d) => n + d.cards.length, 0);
+      if (!total) {
+        $prev.innerHTML = $text.value.trim() ? `<p class="small" style="color:var(--bad)">Keine Karten erkannt. Jede Karte braucht eine Zeile „F: …“ und eine Zeile „A: …“.</p>` : "";
+        return;
+      }
+      $prev.innerHTML = `
+        <h3 style="margin-bottom:10px">${total} ${total === 1 ? "Karte" : "Karten"} in ${parsed.decks.length} ${parsed.decks.length === 1 ? "Stapel" : "Stapeln"} erkannt</h3>
+        ${parsed.skipped ? `<p class="small muted">${parsed.skipped} unvollständige ${parsed.skipped === 1 ? "Karte wurde" : "Karten wurden"} übersprungen (Vorder- oder Rückseite fehlt).</p>` : ""}
+        <div style="display:grid;gap:14px">${parsed.decks.map((d, i) => `
+          <div class="field">
+            <span class="row"><b style="flex:1;min-width:0">${esc(d.name)} · ${d.cards.length} ${d.cards.length === 1 ? "Karte" : "Karten"}</b></span>
+            ${deckSelect(i, d.name)}
+            <div class="gen-list">${d.cards.slice(0, 4).map(c => `<div class="mini" style="cursor:default"><span class="q">${esc(c.front)}</span><span class="a">${esc(c.back)}</span></div>`).join("")}
+              ${d.cards.length > 4 ? `<span class="small muted">… und ${d.cards.length - 4} weitere</span>` : ""}</div>
+          </div>`).join("")}</div>
+        <div class="row" style="margin-top:14px"><span class="spacer"></span><button class="primary" id="igo">${total} ${total === 1 ? "Karte" : "Karten"} importieren</button></div>`;
+      sh.querySelector("#igo").onclick = doImport;
+    };
+    let timer;
+    const update = () => { parsed = parseCards($text.value, fileName); show(); };
+    $text.oninput = () => { clearTimeout(timer); timer = setTimeout(update, 200); };
+    sh.querySelector("#ifile").onchange = async e => {
+      const f = e.target.files[0];
+      if (!f) return;
+      fileName = f.name;
+      $text.value = await f.text();
+      update();
+    };
+    sh.querySelector("#icopy").onclick = async () => {
+      const ok = await copyText(CHAT_PROMPT, sh.querySelector("#icopyfallback"));
+      sh.querySelector("#icopymsg").textContent = ok ? "Kopiert. Im Chat einfügen und das Thema ergänzen." : "Text unten markiert, bitte selbst kopieren.";
+    };
+    async function doImport() {
+      const now = Date.now();
+      const norm = t => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+      let added = 0, dupes = 0, lastDeck = null;
+      const targets = [...sh.querySelectorAll("[data-target]")].map(el => el.value);
+      for (let i = 0; i < parsed.decks.length; i++) {
+        const src = parsed.decks[i];
+        const deck = targets[i] === "__new"
+          ? { id: uid(), name: src.name, color: COLORS[decks.length % COLORS.length], cards: [], createdAt: now }
+          : deckById(targets[i]);
+        const seen = new Set(deck.cards.map(c => norm(c.front)));
+        for (const c of src.cards) {
+          if (seen.has(norm(c.front))) { dupes++; continue; }
+          seen.add(norm(c.front));
+          deck.cards.push({ id: uid(), front: c.front, back: c.back, box: 1, due: now });
+          added++;
+        }
+        await saveDeck(deck);
+        lastDeck = deck;
+      }
+      closeSheet();
+      view = parsed.decks.length === 1 && lastDeck ? { name: "deck", id: lastDeck.id } : { name: "home" };
+      render();
+      toast(`${added} ${added === 1 ? "Karte" : "Karten"} importiert${dupes ? `, ${dupes} doppelte übersprungen` : ""}`);
+    }
   });
 }
 
@@ -1060,6 +1186,7 @@ document.addEventListener("click", e => {
     case "gen": genSheet(el.dataset.id || (view.name === "deck" ? view.id : null)); break;
     case "settings": settingsSheet(); break;
     case "menu": menuSheet(); break;
+    case "import": importSheet(el.dataset.id || null); break;
   }
 });
 

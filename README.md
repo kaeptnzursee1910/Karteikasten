@@ -31,6 +31,8 @@ Die App ist eine statische Webseite ohne Build-Schritt. Sie muss über `http://`
    ```sh
    python3 server.py
    ```
+   Unter Windows reicht ein Doppelklick auf **`Start.bat`**. Beim ersten Start in der Windows-Firewall „Private Netzwerke“ erlauben. Für den Start mit Windows eine Verknüpfung zu `Start.bat` in den Autostart-Ordner legen (Win+R → `shell:startup`).
+
    Der Server zeigt die Adressen an, z. B. `http://192.168.178.20:8080`.
 3. Diese Adresse auf dem iPad in Safari öffnen (iPad und Rechner im selben WLAN). Unter **KI einrichten** auf „Verbinden & Modelle laden“ tippen, das Modell wählen und speichern.
 
@@ -79,6 +81,7 @@ js/docs.js            Import von PDF, Word, Bildern und Text
 js/store.js           Speicher im Browser (IndexedDB)
 sw.js                 Offline-Cache (nur über https oder localhost)
 server.py             Bereitstellung im Heimnetz und Proxy zum Modellserver
+Start.bat             Start per Doppelklick unter Windows
 vendor/               pdf.js 3.11.174 und mammoth 1.6.0 (mit Lizenzen)
 ```
 

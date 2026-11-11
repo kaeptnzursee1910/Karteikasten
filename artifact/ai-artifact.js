@@ -2,6 +2,8 @@
 // Gleiche Schnittstelle wie js/ai.js; Einstellungen für lokale Modelle entfallen.
 
 export const ARTIFACT = true;
+// Alle Karten in einer Anfrage erstellen; Teil-Durchgänge erzeugten bei großen Mengen Dopplungen
+export const SINGLE_PASS = true;
 export const BROWSER_MODELS = [];
 export const CLOUD_SERVICES = {};
 export const settings = { provider: "claude", model: "Claude" };

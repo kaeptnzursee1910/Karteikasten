@@ -859,6 +859,39 @@ const STYLES = {
   def: "Fachbegriff auf der Vorderseite, Definition in 1–2 Sätzen auf der Rückseite.",
 };
 
+/** Kartenliste aus der Antwort lesen; bei abgeschnittener Antwort die vollständigen Karten retten. */
+function parseCardsJson(text) {
+  try { return ai.parseJson(text); }
+  catch (err) {
+    const cards = salvageCards(text);
+    if (!cards.length) throw err;
+    const name = /"deckName"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(text);
+    let deckName = "";
+    try { deckName = name ? JSON.parse(`"${name[1]}"`) : ""; } catch (e) { /* ohne Namen */ }
+    return { deckName, cards, salvaged: true };
+  }
+}
+
+function salvageCards(text) {
+  const start = text.indexOf("[", Math.max(0, text.indexOf('"cards"')));
+  if (start < 0) return [];
+  const out = [];
+  let depth = 0, inStr = false, esc = false, objStart = -1;
+  for (let i = start + 1; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) { if (esc) esc = false; else if (ch === "\\") esc = true; else if (ch === '"') inStr = false; continue; }
+    if (ch === '"') inStr = true;
+    else if (ch === "{") { if (depth++ === 0) objStart = i; }
+    else if (ch === "}") {
+      if (--depth === 0 && objStart >= 0) {
+        try { const o = JSON.parse(text.slice(objStart, i + 1)); if (o && (o.front || o.back)) out.push(o); } catch (e) { /* unvollständig */ }
+        objStart = -1;
+      }
+    } else if (ch === "]" && depth === 0) break;
+  }
+  return out;
+}
+
 function cardSchema(withImages) {
   const card = { type: "object", properties: { front: { type: "string" }, back: { type: "string" } }, required: ["front", "back"] };
   if (withImages) {
@@ -947,7 +980,8 @@ function genSheet(targetId) {
     $model.onchange = async () => { await ai.setModel($model.value); drawDocs(); };
 
     const $count = sh.querySelector("#gcount");
-    const batchSize = browser ? 10 : cloud ? 40 : 20;
+    // Im Artefakt alle Karten in einem Durchgang (ai.SINGLE_PASS), sonst in Teilen
+    const batchSize = ai.SINGLE_PASS ? Infinity : browser ? 10 : cloud ? 40 : 20;
     const countNote = () => {
       const n = parseInt($count.value, 10);
       const el = sh.querySelector("#gcountnote");
@@ -986,7 +1020,7 @@ function genSheet(targetId) {
       };
       const busy = msg => { const el = $out.querySelector("#gbusy"); if (el) el.textContent = msg; };
       const cards = [];
-      let deckName = "", cut = false;
+      let deckName = "", cut = false, salvaged = false;
       try {
         // Bildquellen: Abbildungen zuerst. Vision-Modelle bekommen die Bilder, andere nur die Liste.
         const vision = ai.canSeeImages();
@@ -1051,7 +1085,7 @@ ${sources.length ? `"image" nur bei Karten, die ein Bild bekommen; sonst weglass
         // Große Mengen in Durchgängen erstellen; lokale Modelle liefern sonst oft zu wenige Karten
         const seen = new Set();
         const norm = s => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
-        const maxRounds = Math.ceil(count / batchSize) + 2;
+        const maxRounds = ai.SINGLE_PASS ? 1 : Math.ceil(count / batchSize) + 2;
         setBusy(browser && !ai.browserModelLoaded() ? "Modell wird geladen…" : `Das Modell liest und schreibt ${count} Karten…`);
         for (let round = 0; cards.length < count && round < maxRounds; round++) {
           const n = Math.min(batchSize, count - cards.length);
@@ -1062,7 +1096,8 @@ ${sources.length ? `"image" nur bei Karten, die ein Bild bekommen; sonst weglass
             onText: t => busy(`Das Modell schreibt… ${Math.min(count, done + (t.match(/"front"/g) || []).length)} von ${count} Karten`),
             onProgress: (msg, p) => busy(`Modell wird geladen: ${Math.round((p || 0) * 100)} %`),
           });
-          const res = ai.parseJson(text);
+          const res = parseCardsJson(text);
+          if (res.salvaged) salvaged = true;
           if (!deckName && res?.deckName) deckName = String(res.deckName);
           const raw = Array.isArray(res?.cards) ? res.cards : Array.isArray(res) ? res : [];
           let added = 0;
@@ -1088,12 +1123,12 @@ ${sources.length ? `"image" nur bei Karten, die ein Bild bekommen; sonst weglass
           if (!added) break; // Modell liefert nichts Neues mehr
         }
         if (!cards.length) throw new Error("Das Modell hat keine Karten geliefert. Versuch es noch einmal oder nimm ein größeres Modell.");
-        results = { name: (deckName || "Neuer Stapel").slice(0, 60), cards, cut, wanted: count };
+        results = { name: (deckName || "Neuer Stapel").slice(0, 60), cards, cut, wanted: count, salvaged };
         showResults();
       } catch (e) {
         // Bereits erstellte Karten behalten, wenn ein späterer Durchgang scheitert oder gestoppt wird
         if (cards.length) {
-          results = { name: (deckName || "Neuer Stapel").slice(0, 60), cards, cut, wanted: count, stopped: e.name === "AbortError" ? "Gestoppt." : (e.message || String(e)) };
+          results = { name: (deckName || "Neuer Stapel").slice(0, 60), cards, cut, wanted: count, salvaged, stopped: e.name === "AbortError" ? "Gestoppt." : (e.message || String(e)) };
           showResults();
         } else {
           $out.innerHTML = e.name === "AbortError" ? `<p class="muted">Abgebrochen.</p>` : `<p style="color:var(--bad)">${esc(e.message || String(e))}</p>`;
@@ -1105,7 +1140,7 @@ ${sources.length ? `"image" nur bei Karten, die ein Bild bekommen; sonst weglass
       const withImg = results.cards.filter(c => c.canvas).length;
       $out.innerHTML = `
         <div class="row" style="margin-bottom:10px"><h3>${results.cards.length} Vorschläge${withImg ? ` · ${withImg} mit Bild` : ""}</h3><span class="spacer"></span><button class="ghost" id="gall">Alle abwählen</button></div>
-        ${results.wanted && results.cards.length < results.wanted ? `<p class="note small">${results.stopped ? esc(results.stopped) + " " : ""}Das Modell hat ${results.cards.length} von ${results.wanted} Karten geliefert.${results.stopped ? "" : " Der Stoff gibt vermutlich nicht mehr unterschiedliche Karten her. Mit „Karten erstellen“ kannst du es erneut versuchen."}</p>` : ""}
+        ${results.wanted && results.cards.length < results.wanted ? `<p class="note small">${results.stopped ? esc(results.stopped) + " " : ""}Das Modell hat ${results.cards.length} von ${results.wanted} Karten geliefert.${results.stopped ? "" : results.salvaged ? " Die Antwort war zu lang und wurde abgeschnitten. Übernimm diese Karten und lass die übrigen mit einer kleineren Anzahl erstellen." : " Der Stoff gibt vermutlich nicht mehr unterschiedliche Karten her. Mit „Karten erstellen“ kannst du es erneut versuchen."}</p>` : ""}
         ${results.cut ? `<p class="note small">Die Dokumente waren zu lang für das Modell und wurden gekürzt. Für den Rest kannst du im Textfeld z. B. „ab Seite 10“ angeben, eine größere Kontextlänge einstellen oder das Dokument aufteilen.</p>` : ""}
         <div class="gen-list">${results.cards.map((c, i) => `
           <div class="gen-item"><input type="checkbox" id="gc${i}" checked aria-label="Karte übernehmen"><span>
